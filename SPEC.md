@@ -46,12 +46,14 @@ Angular SPA                    BFF (this app)                 Spring Boot API
 
 Not mandatory in every detail, but strongly preferred for a natural Java/Spring fit:
 
-- **Java 21**, **Spring Boot 3.x** (Maven or Gradle — pick one and be consistent)
+- **Java 21**, **Spring Boot 3.x**, built with **Maven** (`spring-boot-starter-parent`
+  as the parent POM; see "Build & Packaging" below)
 - **Spring Web (MVC)** for the REST/auth endpoints
 - **Spring Session** for the server-side session store — default to an in-memory
-  store for local dev, but structure it so a shared store (Redis via
-  `spring-session-data-redis`) is a config-only swap, matching the reference's
-  production note about `connect-redis`
+  store (the plain Servlet `HttpSession`) for local dev, but structure it so a
+  shared store (Redis via `spring-session-data-redis`) is a build-time opt-in —
+  see "Build & Packaging" below for why that's a Maven profile rather than a pure
+  env-var toggle — matching the reference's production note about `connect-redis`
 - A proxy layer for `/api/**` — either a manual `Filter`/`HandlerInterceptor` +
   `RestClient`/`WebClient` forwarding implementation, or Spring Cloud Gateway if the
   project is comfortable pulling that dependency in. Must support arbitrary HTTP
@@ -68,6 +70,55 @@ Not mandatory in every detail, but strongly preferred for a natural Java/Spring 
   matching the reference's `zod` validation behavior.
 - An HTTP client for calling the Spring Boot API / IdP token endpoints (`RestClient`,
   `WebClient`, or similar).
+
+## Build & Packaging (Maven)
+
+Maven is the build tool for this project — no Gradle wrapper/build files. A single
+`pom.xml` at the repo root, using `spring-boot-starter-parent` as `<parent>` so
+plugin/dependency versions stay aligned with the Spring Boot BOM.
+
+- **`groupId`/`artifactId`**: e.g. `com.toenshoffr` / `bff-java` (adjust to taste,
+  but keep it consistent with the reference repo's naming where practical).
+- **Java version**: set `<java.version>21</java.version>` (or the equivalent
+  `maven.compiler.release`) so the parent POM configures the compiler plugin
+  correctly.
+- **Packaging: `war`**, not `jar`. This app must be deployable to a **standalone
+  Tomcat** (see the README's "Deploying to Tomcat" section) as well as runnable
+  standalone via an embedded server for local dev:
+  - `<packaging>war</packaging>` in `pom.xml`.
+  - The application's entry point class extends
+    `org.springframework.boot.web.servlet.support.SpringBootServletInitializer`
+    and overrides `configure(SpringApplicationBuilder)` to point at the same
+    `@SpringBootApplication` class used by `main()`, so the exact same app boots
+    whether it's launched with `java -jar` (embedded Tomcat) or deployed as a WAR
+    into an external Tomcat's `webapps/` directory.
+  - Mark `spring-boot-starter-tomcat` as `<scope>provided</scope>` — it's still on
+    the classpath for local `mvn spring-boot:run` / `java -jar` runs (Spring Boot's
+    repackaging keeps `provided` deps in the executable jar/war), but it is *not*
+    bundled into the WAR that ships to an external Tomcat, which supplies its own
+    Servlet container.
+  - Keep `spring-boot-maven-plugin` in `<build><plugins>` (its `repackage` goal
+    still produces an executable WAR usable with `java -jar`, on top of the plain
+    deployable WAR Maven's own `war` packaging produces).
+- **Standard build commands**:
+  - `mvn clean verify` — compile, run tests, package.
+  - `mvn clean package` — produces `target/bff-java-<version>.war` (a WAR
+    deployable to Tomcat *and*, thanks to `spring-boot-maven-plugin` repackaging,
+    runnable directly via `java -jar target/bff-java-<version>.war`).
+  - `mvn spring-boot:run` — run locally with the embedded Servlet container,
+    reading config from `application.yml` + env var overrides as usual.
+- Core dependencies expected on the classpath by default (via Spring Boot
+  starters, versions managed by the parent POM — don't pin versions individually
+  unless overriding the BOM for a specific reason): `spring-boot-starter-web`,
+  `spring-boot-starter-validation`, `spring-session-core`, `spring-boot-starter-security`
+  (building blocks only, per the "Suggested Tech Stack" note above), and
+  `spring-boot-starter-test` (+ e.g. `spring-security-test`, plus a stubbed-backend
+  library such as WireMock) for tests.
+- `spring-session-data-redis` + `spring-boot-starter-data-redis` are **not** on the
+  default classpath — Spring Boot wires in a Redis-backed `SessionRepository`
+  purely from those dependencies being present (there's no reliable property to
+  keep them inert while present), so keep them behind an opt-in Maven profile
+  (e.g. `mvn clean package -Predis`) rather than always-on, per "Production Notes".
 
 ## Features to Implement
 
@@ -251,9 +302,23 @@ the new repo's README.)
 
 - Default session store must be safe for local dev only (in-memory); document
   clearly how to swap in a shared store (Redis) for multi-instance/production use.
+  In practice that's a Maven build flag, not just an env var: Spring Boot wires in
+  a Redis-backed `SessionRepository` as soon as `spring-session-data-redis` +
+  `spring-boot-starter-data-redis` are on the classpath and a Redis connection is
+  reachable — there's no supported property that keeps that wiring inert while
+  the dependency is merely present. So the default build excludes both
+  dependencies (in-memory sessions), and `mvn clean package -Predis` (see the
+  `redis` profile in `pom.xml`) is the production build that adds them, alongside
+  `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT` for where to reach Redis.
 - Must run behind TLS with `COOKIE_SECURE=true` in production.
 - `COOKIE_SAME_SITE=none` only needed if Angular and the BFF are on different
   sites — document that same-site deployment is preferred.
+- When deployed as a WAR into an external Tomcat sitting behind a reverse proxy
+  or load balancer that terminates TLS, Tomcat itself (not just Spring) must be
+  told to trust `X-Forwarded-*` — typically via Tomcat's `RemoteIpValve` in
+  `server.xml`/`context.xml` — so `request.isSecure()`/the perceived scheme are
+  correct upstream of Spring's own forwarded-headers handling. See the README's
+  "Deploying to Tomcat" section.
 
 ## Non-Goals / Explicitly Out of Scope
 
@@ -273,8 +338,12 @@ Mirror the reference's organization by responsibility (adapt names to Java/Sprin
 conventions):
 
 ```
+pom.xml                             packaging=war, spring-boot-starter-parent
+src/main/resources/
+└── application.yml                 config defaults, env var overrides
 src/main/java/.../bff/
-├── BffApplication.java             Spring Boot entry point
+├── BffApplication.java             Spring Boot entry point,
+│                                   extends SpringBootServletInitializer
 ├── config/
 │   └── BffProperties.java          @ConfigurationProperties, validated
 ├── auth/
