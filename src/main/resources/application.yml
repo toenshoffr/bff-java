@@ -1,0 +1,64 @@
+# All values below are read from environment variables using the exact names
+# documented in SPEC.md ("Configuration") so existing reference-implementation
+# deployment configs / .env files carry over unchanged wherever the contract
+# requires it. See SPEC.md for the full table and defaults.
+
+server:
+  port: ${SERVER_PORT:${PORT:3000}}
+  # Portable equivalent of Tomcat's RemoteIpValve: registers a ForwardedHeaderFilter
+  # so X-Forwarded-* is honored the same way whether running with the embedded
+  # server or deployed as a WAR into an external Tomcat.
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      # Keep the server-side session timeout in step with the cookie's own max-age
+      # (COOKIE_MAX_AGE_MS), otherwise Tomcat's default 30m idle timeout would
+      # expire sessions well before the cookie says they should be valid.
+      timeout: ${COOKIE_MAX_AGE_MS:28800000}ms
+      cookie:
+        name: ${COOKIE_NAME:bff.sid}
+        http-only: true
+        secure: ${COOKIE_SECURE:true}
+        same-site: ${COOKIE_SAME_SITE:lax}
+        max-age: ${COOKIE_MAX_AGE_MS:28800000}ms
+
+spring:
+  application:
+    name: bff-java
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:${APP_ENV:development}}
+  # Default session store is in-memory (the plain Servlet HttpSession — safe for
+  # local dev / a single instance only). The shared Redis store for production
+  # is a build-time opt-in (`mvn clean package -Predis`, see pom.xml's "redis"
+  # profile) plus these two env vars — no code change needed either way.
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+
+bff:
+  frontend-origin: ${FRONTEND_ORIGIN:}
+  api-base-url: ${API_BASE_URL:}
+  api-timeout-ms: ${API_TIMEOUT_MS:10000}
+  api-proxy-path: ${API_PROXY_PATH:/api}
+  auth-methods: ${AUTH_METHODS:password}
+  session-secret: ${SESSION_SECRET:}
+  cookie-name: ${COOKIE_NAME:bff.sid}
+  cookie-secure: ${COOKIE_SECURE:true}
+  cookie-same-site: ${COOKIE_SAME_SITE:lax}
+  cookie-max-age-ms: ${COOKIE_MAX_AGE_MS:28800000}
+  csrf-protection-enabled: ${CSRF_PROTECTION_ENABLED:true}
+  password-login-path: ${PASSWORD_LOGIN_PATH:/api/auth/login}
+  password-refresh-path: ${PASSWORD_REFRESH_PATH:/api/auth/refresh}
+  oauth-authorization-endpoint: ${OAUTH_AUTHORIZATION_ENDPOINT:}
+  oauth-token-endpoint: ${OAUTH_TOKEN_ENDPOINT:}
+  oauth-end-session-endpoint: ${OAUTH_END_SESSION_ENDPOINT:}
+  oauth-client-id: ${OAUTH_CLIENT_ID:}
+  oauth-client-secret: ${OAUTH_CLIENT_SECRET:}
+  oauth-redirect-uri: ${OAUTH_REDIRECT_URI:}
+  oauth-scopes: ${OAUTH_SCOPES:openid profile email}
+  oauth-post-login-redirect: ${OAUTH_POST_LOGIN_REDIRECT:/}
+
+logging:
+  level:
+    com.toenshoffr.bff: INFO

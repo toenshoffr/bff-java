@@ -50,9 +50,10 @@ Not mandatory in every detail, but strongly preferred for a natural Java/Spring 
   as the parent POM; see "Build & Packaging" below)
 - **Spring Web (MVC)** for the REST/auth endpoints
 - **Spring Session** for the server-side session store — default to an in-memory
-  store for local dev, but structure it so a shared store (Redis via
-  `spring-session-data-redis`) is a config-only swap, matching the reference's
-  production note about `connect-redis`
+  store (the plain Servlet `HttpSession`) for local dev, but structure it so a
+  shared store (Redis via `spring-session-data-redis`) is a build-time opt-in —
+  see "Build & Packaging" below for why that's a Maven profile rather than a pure
+  env-var toggle — matching the reference's production note about `connect-redis`
 - A proxy layer for `/api/**` — either a manual `Filter`/`HandlerInterceptor` +
   `RestClient`/`WebClient` forwarding implementation, or Spring Cloud Gateway if the
   project is comfortable pulling that dependency in. Must support arbitrary HTTP
@@ -106,14 +107,18 @@ plugin/dependency versions stay aligned with the Spring Boot BOM.
     runnable directly via `java -jar target/bff-java-<version>.war`).
   - `mvn spring-boot:run` — run locally with the embedded Servlet container,
     reading config from `application.yml` + env var overrides as usual.
-- Core dependencies expected on the classpath (via Spring Boot starters, versions
-  managed by the parent POM — don't pin versions individually unless overriding
-  the BOM for a specific reason): `spring-boot-starter-web`,
-  `spring-boot-starter-validation`, `spring-session-core` (+
-  `spring-session-data-redis` for the optional Redis-backed store, see "Production
-  Notes"), `spring-boot-starter-security` (building blocks only, per the
-  "Suggested Tech Stack" note above), and `spring-boot-starter-test` (+ e.g.
-  `spring-security-test`) for tests.
+- Core dependencies expected on the classpath by default (via Spring Boot
+  starters, versions managed by the parent POM — don't pin versions individually
+  unless overriding the BOM for a specific reason): `spring-boot-starter-web`,
+  `spring-boot-starter-validation`, `spring-session-core`, `spring-boot-starter-security`
+  (building blocks only, per the "Suggested Tech Stack" note above), and
+  `spring-boot-starter-test` (+ e.g. `spring-security-test`, plus a stubbed-backend
+  library such as WireMock) for tests.
+- `spring-session-data-redis` + `spring-boot-starter-data-redis` are **not** on the
+  default classpath — Spring Boot wires in a Redis-backed `SessionRepository`
+  purely from those dependencies being present (there's no reliable property to
+  keep them inert while present), so keep them behind an opt-in Maven profile
+  (e.g. `mvn clean package -Predis`) rather than always-on, per "Production Notes".
 
 ## Features to Implement
 
@@ -297,6 +302,14 @@ the new repo's README.)
 
 - Default session store must be safe for local dev only (in-memory); document
   clearly how to swap in a shared store (Redis) for multi-instance/production use.
+  In practice that's a Maven build flag, not just an env var: Spring Boot wires in
+  a Redis-backed `SessionRepository` as soon as `spring-session-data-redis` +
+  `spring-boot-starter-data-redis` are on the classpath and a Redis connection is
+  reachable — there's no supported property that keeps that wiring inert while
+  the dependency is merely present. So the default build excludes both
+  dependencies (in-memory sessions), and `mvn clean package -Predis` (see the
+  `redis` profile in `pom.xml`) is the production build that adds them, alongside
+  `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT` for where to reach Redis.
 - Must run behind TLS with `COOKIE_SECURE=true` in production.
 - `COOKIE_SAME_SITE=none` only needed if Angular and the BFF are on different
   sites — document that same-site deployment is preferred.

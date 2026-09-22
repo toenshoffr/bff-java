@@ -4,10 +4,8 @@ A Java/Spring Boot rewrite of [`toenshoffr/bff`](https://github.com/toenshoffr/b
 a Backend-for-Frontend (BFF) that implements the **token handler pattern** between
 an Angular SPA and a Spring Boot REST API.
 
-> **Status:** this repository currently contains only the implementation
-> specification ([`SPEC.md`](./SPEC.md)); the Java/Maven sources described below
-> are the build this project targets. Once implemented, the commands in this
-> README (`mvn clean package`, WAR deployment to Tomcat, etc.) apply as written.
+See [`SPEC.md`](./SPEC.md) for the full behavioral specification this
+implementation follows, including the acceptance checklist it satisfies.
 
 ## What this project is
 
@@ -59,12 +57,12 @@ full rationale). From the repo root:
 mvn clean package
 ```
 
-This produces `target/bff-java-<version>.war`. That single artifact is
+This produces `target/bff-java.war`. That single artifact is
 dual-purpose:
 
 - **Run it standalone** (embedded Tomcat, for local dev or a container image):
   ```bash
-  java -jar target/bff-java-<version>.war
+  java -jar target/bff-java.war
   ```
   or, without packaging first:
   ```bash
@@ -77,6 +75,18 @@ full in `SPEC.md` → "Configuration"; at minimum you'll need
 `FRONTEND_ORIGIN`, `API_BASE_URL`, and `SESSION_SECRET` set before the app
 will start.
 
+## Running the tests
+
+```bash
+mvn clean verify
+```
+
+`mvn clean package`/`mvn clean verify` run the full test suite, including
+integration tests that boot the real Spring context against a stubbed
+Spring Boot API/IdP (via [WireMock](https://wiremock.org/)) and exercise the
+flows in SPEC.md's acceptance checklist: CSRF, password login, OAuth PKCE,
+transparent token refresh, the authenticated proxy, and logout.
+
 ## Deploying to Tomcat
 
 The app is packaged as a standard WAR (`<packaging>war</packaging>`, entry
@@ -88,11 +98,11 @@ same way any Spring Boot WAR does.
    ```bash
    mvn clean package
    ```
-   This produces `target/bff-java-<version>.war`.
+   This produces `target/bff-java.war`.
 
 2. **Copy it into Tomcat's `webapps/` directory**
    ```bash
-   cp target/bff-java-<version>.war "$CATALINA_HOME/webapps/bff.war"
+   cp target/bff-java.war "$CATALINA_HOME/webapps/bff.war"
    ```
    Tomcat auto-deploys on startup (or on drop-in, if `autoDeploy` is enabled).
    The name you give the file becomes the context path — `bff.war` deploys
@@ -162,9 +172,11 @@ same way any Spring Boot WAR does.
    balancer. For a multi-instance deployment, either:
    - enable sticky sessions on the load balancer (simplest, but ties a user to
      one node), or
-   - switch the app to the Redis-backed session store (`spring-session-data-redis`,
-     a config-only swap per `SPEC.md` → "Production Notes") so any node can
-     serve any session.
+   - build with the Redis-backed session store so any node can serve any
+     session: `mvn clean package -Predis` (see the `redis` profile in
+     `pom.xml`), then set `SPRING_DATA_REDIS_HOST`/`SPRING_DATA_REDIS_PORT` to
+     point at your Redis instance. This is a build-time flag rather than a pure
+     env-var toggle — see `SPEC.md` → "Production Notes" for why.
 
 7. **Verify**
 
